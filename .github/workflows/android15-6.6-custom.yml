@@ -131,9 +131,10 @@ jobs:
 
     - name: Post-build cleanup
       run: |
-        rm -rf android-kernel/.repo
-        rm -rf ~/.cache/bazel
-        rm -rf /tmp/*
+        # Nur Kernel-relevante Ordner löschen, Fehler ignorieren
+        rm -rf android-kernel/.repo || true
+        rm -rf ~/.cache/bazel || true
+        rm -rf /tmp/* || true
         df -h
 
     - name: Upload artifacts
