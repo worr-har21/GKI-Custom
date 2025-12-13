@@ -7,7 +7,7 @@ on:
         required: true
         type: string
         description: >
-          Patch level (z. B. 2024-11 für GKI ZIP; Branch ist fix auf Basis)
+          Patch level (z. B. 2024-11 für GKI ZIP)
           for example: 2024-11
       os_version:
         required: true
@@ -19,13 +19,13 @@ on:
         required: true
         type: string
         description: >
-          With SUBLEVEL of kernel,
-          for example: android15-6.6-custom
+          Name für Artifacts
+          for example: android15-6.6-docker
       custom:
         required: true
         type: boolean
         description: >
-          Enable LXC, Docker
+          Enable LXC, Docker (via rvalyi Patches)
       kernelsu:
         required: true
         type: boolean
@@ -41,7 +41,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt install repo wget -y
+        sudo apt install repo wget unzip -y
 
     - name: Install latest repo tool
       run: |
@@ -57,7 +57,7 @@ jobs:
         mkdir android-kernel
         cd android-kernel
         repo init --depth 1 -u https://android.googlesource.com/kernel/manifest -b common-android15-6.6
-        repo sync
+        repo sync -j$(nproc)
 
     - name: Apply patches and configuration files
       if: ${{ inputs.custom == true }}
@@ -65,66 +65,68 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
         
-        # Fallback für Defconfig (keine exakte für 6.6 verfügbar)
+        # Defconfig kopieren, falls verfügbar (Fallback für neuere Kernels)
         if [ -f ./gki-patch/config/gki_defconfig-android15-6.6 ]; then
           cp ./gki-patch/config/gki_defconfig-android15-6.6 ./android-kernel/common/arch/arm64/configs/gki_defconfig
         else
-          echo "Keine exakte Defconfig für 6.6 gefunden – überspringe (nutze Standard gki_defconfig und Patches)"
+          echo "Keine exakte Defconfig für 6.6 gefunden – nutze Standard gki_defconfig"
         fi
         
         cd ./android-kernel/common
-        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Einige Patches fehlschlagen (normal bei Basis-Branch – manuell fixen, falls nötig)"
+        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches konnten nicht angewendet werden (häufig bei neueren Branches – manuell prüfen)"
 
     - name: KernelSU
       if: ${{ inputs.kernelsu == true }}
       run: |
-          cd $GITHUB_WORKSPACE/android-kernel
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+        cd $GITHUB_WORKSPACE/android-kernel
+        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
     - name: Build Kernel
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
-        ls
-        tools/bazel build //common:kernel_aarch64_dist
+        mkdir -p out/android15-6.6/dist
+        tools/bazel run //common:kernel_aarch64_dist -- --dist_dir=out/android15-6.6/dist
 
     - name: Prepare artifacts
-      id: prepareArtifacts
       run: |
         cd $GITHUB_WORKSPACE
         OUTDIR=android-kernel/out/android15-6.6/dist
-        mkdir output
-        cp $OUTDIR/Image ./output/
-        cp $OUTDIR/Image.lz4 ./output/
+        mkdir -p output
+        cp $OUTDIR/Image ./output/ || echo "Image nicht gefunden"
+        cp $OUTDIR/Image.lz4 ./output/ || echo "Image.lz4 nicht gefunden"
         cp $OUTDIR/Image ./
-        gzip -n -k -f -9 Image >Image.gz
+        gzip -n -k -f -9 Image > Image.gz
+        
         git clone https://github.com/Kernel-SU/AnyKernel3
         rm -rf ./AnyKernel3/.git
         cp $OUTDIR/Image ./AnyKernel3/
-        wget https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-${{ inputs.os_patch_level }}_r1.zip -O ./gki-kernel.zip || echo "GKI ZIP nicht gefunden – überspringe (nur für boot.img nötig)"
-        if [ -f ./gki-kernel.zip ]; then
-          unzip -q ./gki-kernel.zip
-          rm ./gki-kernel.zip
+        
+        # GKI certified boot ZIP (letzter verfügbarer Patchlevel)
+        wget https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-${{ inputs.os_patch_level }}_r1.zip -O gki-kernel.zip || echo "GKI ZIP nicht verfügbar"
+        if [ -f gki-kernel.zip ]; then
+          unzip -q gki-kernel.zip
+          rm gki-kernel.zip
         fi
+        
         cd $GITHUB_WORKSPACE/android-kernel
-        echo "Unpack boot (falls boot.img vorhanden)"
+        # Unpack originale boot.img (falls im Repo hochgeladen)
         if ls $GITHUB_WORKSPACE/boot*.img 1> /dev/null 2>&1; then
           ./tools/mkbootimg/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot*.img
+        else
+          echo "Keine originale boot.img gefunden – boot.img-Bau übersprungen"
         fi
-        echo "Build boot.img"
-        ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel out/android15-6.6/dist/Image --ramdisk out/ramdisk --os_version \( {{ inputs.os_version }} --os_patch_level \){{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}_${{ inputs.os_patch_level }}-boot.img
-        echo "Build boot-lz4.img"
-        ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel out/android15-6.6/dist/Image.lz4 --ramdisk out/ramdisk --os_version \( {{ inputs.os_version }} --os_patch_level \){{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}_${{ inputs.os_patch_level }}-boot-lz4.img
-        echo "Build boot-gz.img"
-        ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( GITHUB_WORKSPACE/Image.gz --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}_${{ inputs.os_patch_level }}-boot-gz.img
+        
+        # boot.img bauen (nur wenn ramdisk vorhanden)
+        if [ -d out/ramdisk ]; then
+          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot.img
+          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image.lz4 --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-lz4.img
+          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( GITHUB_WORKSPACE/Image.gz --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-gz.img
+        fi
 
-    - name: Upload Image and Image.gz and boot.img
+    - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Image-\( {{ inputs.version_name }}_ \){{ inputs.os_patch_level }}
-        path: ./output/*
-
-    - name: Upload AnyKernel3
-      uses: actions/upload-artifact@v4
-      with:
-        name: AnyKernel3-\( {{ inputs.version_name }}_ \){{ inputs.os_patch_level }}
-        path: ./AnyKernel3/*
+        name: Kernel-\( {{ inputs.version_name }}_ \){{ inputs.os_patch_level }}
+        path: |
+          ./output/*
+          ./AnyKernel3/*
