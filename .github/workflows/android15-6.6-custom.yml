@@ -1,6 +1,8 @@
 name: Android15-6.6-Custom
 
 on: 
+  push:                #<-- Temporär hinzugefügt, um den Button zu aktivieren (später entfernen!)
+    branches: [ main ]  # Passe an deinen default Branch an (main oder master)
   workflow_dispatch:
     inputs:
       os_patch_level:
@@ -36,12 +38,14 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt install repo wget unzip -y
+        sudo apt install repo wget unzip python3 python3-pip -y
+        pip3 install --user mkbootimg
 
     - name: Install latest repo tool
       run: |
-        curl https://storage.googleapis.com/git-repo-downloads/repo > /usr/local/bin/repo
-        chmod a+x /usr/local/bin/repo
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
+        chmod a+x ~/repo
+        sudo mv ~/repo /usr/local/bin/repo
 
     - name: Sync the kernel source code
       run: |
