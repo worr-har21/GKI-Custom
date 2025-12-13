@@ -8,27 +8,22 @@ on:
       os_patch_level:
         required: true
         type: string
-        description: Patch level (z. B. 2024-11)
         default: 2024-11
       os_version:
         required: true
         type: string
-        description: OS Version
         default: 15.0.0
       version_name:
         required: true
         type: string
-        description: Artifact name
         default: android15-6.6-docker
       custom:
         required: true
         type: boolean
-        description: Enable LXC/Docker Support
         default: true
       kernelsu:
         required: true
         type: boolean
-        description: Enable KernelSU
         default: true
 
 jobs:
@@ -40,27 +35,30 @@ jobs:
       ACTIONS_STEP_DEBUG: false
       ACTIONS_RUNNER_DEBUG: false
 
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
+      # 🔥 Bazel Stabilitäts-Tuning
+      BAZEL_ARGS: >
+        --jobs=6
+        --local_ram_resources=8192
+        --local_cpu_resources=6
+        --noshow_progress
+        --announce_rc
 
-    # 🔥 EXTREM WICHTIG: Speicher freimachen
+    steps:
+    - uses: actions/checkout@v4
+
+    # 🔥 Speicher freimachen
     - name: Free disk space
       run: |
-        echo "=== BEFORE CLEANUP ==="
         df -h
-
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
         sudo rm -rf /opt/hostedtoolcache
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
-
-        echo "=== AFTER CLEANUP ==="
         df -h
 
-    # 🔁 Swap gegen OOM & Log-Explosion
+    # 🔁 Swap
     - name: Enable swap
       run: |
         sudo fallocate -l 8G /swapfile
@@ -72,16 +70,9 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y \
-          repo \
-          wget \
-          unzip \
-          python3 \
-          git \
-          zip \
-          curl
+        sudo apt install -y repo wget unzip python3 git zip curl
 
-    - name: Install latest repo tool
+    - name: Install repo tool
       run: |
         curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > repo
         chmod +x repo
@@ -96,7 +87,7 @@ jobs:
           --no-tags \
           -u https://android.googlesource.com/kernel/manifest \
           -b common-android15-6.6
-        repo sync -c -j$(nproc)
+        repo sync -c -j6
 
     - name: Apply Docker / LXC patches
       if: ${{ inputs.custom }}
@@ -115,11 +106,13 @@ jobs:
         cd android-kernel
         curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -
 
-    - name: Build kernel (Bazel)
+    # ⚡ Bazel Build (getuned)
+    - name: Build kernel
       run: |
         cd android-kernel
         mkdir -p out/android15-6.6/dist
-        tools/bazel run //common:kernel_aarch64_dist -- \
+        tools/bazel run //common:kernel_aarch64_dist \
+          ${{ env.BAZEL_ARGS }} -- \
           --dist_dir=out/android15-6.6/dist
 
     - name: Sanitize artifact name
@@ -131,12 +124,20 @@ jobs:
       run: |
         OUTDIR=android-kernel/out/android15-6.6/dist
         mkdir -p output
-
         cp $OUTDIR/Image* output/ 2>/dev/null || true
 
         git clone https://github.com/Kernel-SU/AnyKernel3
         rm -rf AnyKernel3/.git
         cp $OUTDIR/Image AnyKernel3/ 2>/dev/null || true
+
+    # 🧹 POST-BUILD CLEANUP (wichtig!)
+    - name: Post-build cleanup
+      run: |
+        echo "Cleanup..."
+        rm -rf android-kernel/.repo
+        rm -rf ~/.cache/bazel
+        rm -rf /tmp/*
+        df -h
 
     - name: Upload artifacts
       uses: actions/upload-artifact@v4
