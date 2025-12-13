@@ -2,7 +2,7 @@ name: Android15-6.6-Custom
 
 on: 
   push:               # <-- Temporär hinzugefügt, um den Button zu aktivieren (später entfernen!)
-    branches: [ main ]  # Passe an deinen default Branch an (main oder master)
+    branches: [ main ]  # Passe an deinen default Branch an
   workflow_dispatch:
     inputs:
       os_patch_level:
@@ -38,8 +38,7 @@ jobs:
 
     - name: Install Dependencies
       run: |
-        sudo apt install repo wget unzip python3 python3-pip -y
-        pip3 install --user mkbootimg
+        sudo apt install repo wget unzip python3 -y
 
     - name: Install latest repo tool
       run: |
@@ -103,13 +102,13 @@ jobs:
         
         cd $GITHUB_WORKSPACE/android-kernel
         if ls $GITHUB_WORKSPACE/boot*.img >/dev/null 2>&1; then
-          ./tools/mkbootimg/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot*.img
+          python3 tools/mkbootimg/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot*.img
         fi
         
         if [ -d out/ramdisk ]; then
-          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot.img
-          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image.lz4 --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-lz4.img
-          ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( GITHUB_WORKSPACE/Image.gz --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-gz.img
+          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot.img
+          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image.lz4 --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-lz4.img
+          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( GITHUB_WORKSPACE/Image.gz --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-gz.img
         fi
 
     - name: Upload Artifacts
