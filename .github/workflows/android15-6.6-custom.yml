@@ -19,7 +19,7 @@ on:
         required: true
         type: string
         description: >
-          Name für Artifacts
+          Name für Artifacts (vermeide \, /, :, ", <, >, |, *, ?)
           for example: android15-6.6-docker
       custom:
         required: true
@@ -65,7 +65,6 @@ jobs:
         cd $GITHUB_WORKSPACE
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
         
-        # Defconfig kopieren, falls verfügbar (Fallback für neuere Kernels)
         if [ -f ./gki-patch/config/gki_defconfig-android15-6.6 ]; then
           cp ./gki-patch/config/gki_defconfig-android15-6.6 ./android-kernel/common/arch/arm64/configs/gki_defconfig
         else
@@ -73,7 +72,7 @@ jobs:
         fi
         
         cd ./android-kernel/common
-        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches konnten nicht angewendet werden (häufig bei neueren Branches – manuell prüfen)"
+        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches konnten nicht angewendet werden"
 
     - name: KernelSU
       if: ${{ inputs.kernelsu == true }}
@@ -86,6 +85,11 @@ jobs:
         cd $GITHUB_WORKSPACE/android-kernel
         mkdir -p out/android15-6.6/dist
         tools/bazel run //common:kernel_aarch64_dist -- --dist_dir=out/android15-6.6/dist
+
+    - name: Sanitize Artifact Name
+      run: |
+        SAFE_NAME=\( (echo " \){{ inputs.version_name }}" | sed -e 's/[\\/:"<>|*?]/-/g')
+        echo "SAFE_ARTIFACT_NAME=Kernel-\( SAFE_NAME- \){{ inputs.os_patch_level }}" >> $GITHUB_ENV
 
     - name: Prepare artifacts
       run: |
@@ -101,7 +105,6 @@ jobs:
         rm -rf ./AnyKernel3/.git
         cp $OUTDIR/Image ./AnyKernel3/
         
-        # GKI certified boot ZIP (letzter verfügbarer Patchlevel)
         wget https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-${{ inputs.os_patch_level }}_r1.zip -O gki-kernel.zip || echo "GKI ZIP nicht verfügbar"
         if [ -f gki-kernel.zip ]; then
           unzip -q gki-kernel.zip
@@ -109,14 +112,12 @@ jobs:
         fi
         
         cd $GITHUB_WORKSPACE/android-kernel
-        # Unpack originale boot.img (falls im Repo hochgeladen)
         if ls $GITHUB_WORKSPACE/boot*.img 1> /dev/null 2>&1; then
           ./tools/mkbootimg/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot*.img
         else
           echo "Keine originale boot.img gefunden – boot.img-Bau übersprungen"
         fi
         
-        # boot.img bauen (nur wenn ramdisk vorhanden)
         if [ -d out/ramdisk ]; then
           ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot.img
           ./tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image.lz4 --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-lz4.img
@@ -126,7 +127,13 @@ jobs:
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: Kernel-\( {{ inputs.version_name }}_ \){{ inputs.os_patch_level }}
+        name: ${{ env.SAFE_ARTIFACT_NAME }}
         path: |
           ./output/*
           ./AnyKernel3/*
+
+    - name: Upload AnyKernel3 separately (falls nötig)
+      uses: actions/upload-artifact@v4
+      with:
+        name: AnyKernel3-${{ env.SAFE_ARTIFACT_NAME }}
+        path: ./AnyKernel3/*
