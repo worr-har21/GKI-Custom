@@ -39,8 +39,7 @@ jobs:
     env:
       ACTIONS_STEP_DEBUG: false
       ACTIONS_RUNNER_DEBUG: false
-
-      BAZEL_ARGS="--jobs=6 --local_ram_resources=8192 --local_cpu_resources=6 --noshow_progress --announce_rc"
+      BAZEL_ARGS: "--jobs=6 --local_ram_resources=8192 --local_cpu_resources=6 --noshow_progress --announce_rc"
 
     steps:
     - name: Checkout
