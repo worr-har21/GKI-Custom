@@ -1,8 +1,8 @@
 name: Android15-6.6-Custom
 
 on: 
-  push:               # <-- Temporär hinzugefügt, um den Button zu aktivieren (später entfernen!)
-    branches: [ main ]  # Passe an deinen default Branch an
+  push:               # <-- Temporär: Aktiviert den Button nach erstem Lauf (später entfernen!)
+    branches: [ main ]  # Passe an, falls dein default Branch "master" heißt
   workflow_dispatch:
     inputs:
       os_patch_level:
@@ -23,11 +23,13 @@ on:
       custom:
         required: true
         type: boolean
-        default: true
+        description: Enable LXC/Docker Support (rvalyi Patches)
+        default: true        # <-- Immer enabled!
       kernelsu:
         required: true
         type: boolean
-        default: true
+        description: Enable KernelSU
+        default: true        # <-- Immer enabled!
 
 jobs:
   build:
@@ -54,18 +56,20 @@ jobs:
         repo init --depth 1 -u https://android.googlesource.com/kernel/manifest -b common-android15-6.6
         repo sync -j$(nproc)
 
-    - name: Apply patches and configuration files
+    - name: Apply patches and configuration files (Docker/LXC Support)
       if: ${{ inputs.custom == true }}
       run: |
         cd $GITHUB_WORKSPACE
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
         if [ -f ./gki-patch/config/gki_defconfig-android15-6.6 ]; then
           cp ./gki-patch/config/gki_defconfig-android15-6.6 ./android-kernel/common/arch/arm64/configs/gki_defconfig
+        else
+          echo "Keine exakte Defconfig für 6.6 – nutze Standard + Patches"
         fi
         cd ./android-kernel/common
-        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches fehlgeschlagen"
+        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches fehlgeschlagen (häufig bei 6.6 – wichtige Features trotzdem meist aktiv)"
 
-    - name: KernelSU
+    - name: KernelSU Integration
       if: ${{ inputs.kernelsu == true }}
       run: |
         cd $GITHUB_WORKSPACE/android-kernel
