@@ -8,22 +8,27 @@ on:
       os_patch_level:
         required: true
         type: string
+        description: Patch level (z. B. 2024-11)
         default: 2024-11
       os_version:
         required: true
         type: string
+        description: OS Version
         default: 15.0.0
       version_name:
         required: true
         type: string
+        description: Artifact name
         default: android15-6.6-docker
       custom:
         required: true
         type: boolean
+        description: Enable LXC/Docker Support
         default: true
       kernelsu:
         required: true
         type: boolean
+        description: Enable KernelSU
         default: true
 
 jobs:
@@ -35,7 +40,7 @@ jobs:
       ACTIONS_STEP_DEBUG: false
       ACTIONS_RUNNER_DEBUG: false
 
-      # 🔥 Bazel Stabilitäts-Tuning
+      # ⚡ Bazel Stabilitäts-Tuning
       BAZEL_ARGS: >
         --jobs=6
         --local_ram_resources=8192
@@ -44,21 +49,26 @@ jobs:
         --announce_rc
 
     steps:
-    - uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
     # 🔥 Speicher freimachen
     - name: Free disk space
       run: |
+        echo "=== BEFORE CLEANUP ==="
         df -h
+
         sudo rm -rf /usr/share/dotnet
         sudo rm -rf /usr/local/lib/android
         sudo rm -rf /opt/ghc
         sudo rm -rf /opt/hostedtoolcache
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
+
+        echo "=== AFTER CLEANUP ==="
         df -h
 
-    # 🔁 Swap
+    # 🔁 Swap gegen OOM
     - name: Enable swap
       run: |
         sudo fallocate -l 8G /swapfile
@@ -70,7 +80,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y repo wget unzip python3 git zip curl
+        sudo apt install -y \
+          repo wget unzip python3 git zip curl
 
     - name: Install repo tool
       run: |
@@ -89,8 +100,9 @@ jobs:
           -b common-android15-6.6
         repo sync -c -j6
 
+    # ✅ FIX: push = immer aktiv, dispatch = Input
     - name: Apply Docker / LXC patches
-      if: ${{ inputs.custom }}
+      if: ${{ github.event_name == 'push' || inputs.custom == true }}
       run: |
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
         if [ -f gki-patch/config/gki_defconfig-android15-6.6 ]; then
@@ -100,14 +112,14 @@ jobs:
         cd android-kernel/common
         git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || true
 
+    # ✅ FIX: push = immer aktiv, dispatch = Input
     - name: KernelSU integration
-      if: ${{ inputs.kernelsu }}
+      if: ${{ github.event_name == 'push' || inputs.kernelsu == true }}
       run: |
         cd android-kernel
         curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -
 
-    # ⚡ Bazel Build (getuned)
-    - name: Build kernel
+    - name: Build kernel (Bazel)
       run: |
         cd android-kernel
         mkdir -p out/android15-6.6/dist
@@ -124,16 +136,16 @@ jobs:
       run: |
         OUTDIR=android-kernel/out/android15-6.6/dist
         mkdir -p output
+
         cp $OUTDIR/Image* output/ 2>/dev/null || true
 
         git clone https://github.com/Kernel-SU/AnyKernel3
         rm -rf AnyKernel3/.git
         cp $OUTDIR/Image AnyKernel3/ 2>/dev/null || true
 
-    # 🧹 POST-BUILD CLEANUP (wichtig!)
+    # 🧹 Post-Build Cleanup
     - name: Post-build cleanup
       run: |
-        echo "Cleanup..."
         rm -rf android-kernel/.repo
         rm -rf ~/.cache/bazel
         rm -rf /tmp/*
