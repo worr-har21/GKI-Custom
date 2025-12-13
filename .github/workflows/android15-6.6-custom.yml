@@ -1,124 +1,132 @@
 name: Android15-6.6-Custom
 
 on: 
-  push:               # <-- Temporär: Aktiviert den Button nach erstem Lauf (später entfernen!)
-    branches: [ main ]  # Passe an, falls dein default Branch "master" heißt
+  push:
+    branches: [ main ]
   workflow_dispatch:
     inputs:
       os_patch_level:
         required: true
         type: string
-        description: Patch level (z. B. 2024-11)
         default: 2024-11
       os_version:
         required: true
         type: string
-        description: OS Version
         default: 15.0.0
       version_name:
         required: true
         type: string
-        description: "Name für Artifacts (vermeide Sonderzeichen wie \\ / : \" < > | * ?)"
         default: android15-6.6-docker
       custom:
         required: true
         type: boolean
-        description: Enable LXC/Docker Support (rvalyi Patches)
-        default: true        # <-- Immer enabled!
+        default: true
       kernelsu:
         required: true
         type: boolean
-        description: Enable KernelSU
-        default: true        # <-- Immer enabled!
+        default: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    env:
+      ACTIONS_STEP_DEBUG: false
+      ACTIONS_RUNNER_DEBUG: false
 
     steps:
     - uses: actions/checkout@v4
 
+    # 🔥 KRITISCH: Platz freimachen
+    - name: Free disk space
+      run: |
+        echo "=== BEFORE CLEANUP ==="
+        df -h
+
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /usr/local/lib/android
+        sudo rm -rf /opt/ghc
+        sudo rm -rf /opt/hostedtoolcache
+        sudo apt-get clean
+        sudo rm -rf /var/lib/apt/lists/*
+
+        echo "=== AFTER CLEANUP ==="
+        df -h
+
+    # 🔁 Swap gegen OOM
+    - name: Enable swap
+      run: |
+        sudo fallocate -l 8G /swapfile
+        sudo chmod 600 /swapfile
+        sudo mkswap /swapfile
+        sudo swapon /swapfile
+        free -h
+
     - name: Install Dependencies
       run: |
-        sudo apt install repo wget unzip python3 -y
+        sudo apt update
+        sudo apt install -y repo wget unzip python3 git zip
 
     - name: Install latest repo tool
       run: |
-        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/repo
-        chmod a+x ~/repo
-        sudo mv ~/repo /usr/local/bin/repo
+        curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > repo
+        chmod +x repo
+        sudo mv repo /usr/local/bin/repo
 
     - name: Sync the kernel source code
       run: |
-        cd $GITHUB_WORKSPACE
         mkdir android-kernel
         cd android-kernel
-        repo init --depth 1 -u https://android.googlesource.com/kernel/manifest -b common-android15-6.6
-        repo sync -j$(nproc)
+        repo init \
+          --depth=1 \
+          --no-tags \
+          --optimized-fetch \
+          -u https://android.googlesource.com/kernel/manifest \
+          -b common-android15-6.6
+        repo sync -c -j$(nproc)
 
     - name: Apply patches and configuration files (Docker/LXC Support)
-      if: ${{ inputs.custom == true }}
+      if: ${{ inputs.custom }}
       run: |
-        cd $GITHUB_WORKSPACE
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
-        if [ -f ./gki-patch/config/gki_defconfig-android15-6.6 ]; then
-          cp ./gki-patch/config/gki_defconfig-android15-6.6 ./android-kernel/common/arch/arm64/configs/gki_defconfig
-        else
-          echo "Keine exakte Defconfig für 6.6 – nutze Standard + Patches"
+        if [ -f gki-patch/config/gki_defconfig-android15-6.6 ]; then
+          cp gki-patch/config/gki_defconfig-android15-6.6 android-kernel/common/arch/arm64/configs/gki_defconfig
         fi
-        cd ./android-kernel/common
-        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || echo "Warnung: Einige Patches fehlgeschlagen (häufig bei 6.6 – wichtige Features trotzdem meist aktiv)"
+        cd android-kernel/common
+        git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || true
 
     - name: KernelSU Integration
-      if: ${{ inputs.kernelsu == true }}
+      if: ${{ inputs.kernelsu }}
       run: |
-        cd $GITHUB_WORKSPACE/android-kernel
-        curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+        cd android-kernel
+        curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -
 
     - name: Build Kernel
       run: |
-        cd $GITHUB_WORKSPACE/android-kernel
+        cd android-kernel
         mkdir -p out/android15-6.6/dist
         tools/bazel run //common:kernel_aarch64_dist -- --dist_dir=out/android15-6.6/dist
 
     - name: Sanitize Artifact Name
       run: |
-        SAFE_NAME=\( (echo " \){{ inputs.version_name }}" | sed 's/[\\/:"<>|*?]/-/g')
-        SAFE_NAME=$(echo "\( SAFE_NAME" | sed 's/^[[:space:]]\+//;s/[[:space:]]\+ \)//')
-        echo "SAFE_ARTIFACT_NAME=Kernel-\( SAFE_NAME- \){{ inputs.os_patch_level }}" >> $GITHUB_ENV
+        SAFE_NAME=$(echo "${{ inputs.version_name }}" | sed 's/[\\/:"<>|*?]/-/g')
+        echo "SAFE_ARTIFACT_NAME=Kernel-${SAFE_NAME}-${{ inputs.os_patch_level }}" >> $GITHUB_ENV
 
     - name: Prepare artifacts
       run: |
-        cd $GITHUB_WORKSPACE
         OUTDIR=android-kernel/out/android15-6.6/dist
         mkdir -p output
-        cp $OUTDIR/Image ./output/ 2>/dev/null || true
-        cp $OUTDIR/Image.lz4 ./output/ 2>/dev/null || true
-        cp $OUTDIR/Image ./ 2>/dev/null || true
-        gzip -n -k -f -9 Image > Image.gz 2>/dev/null || true
-        
+        cp $OUTDIR/Image* output/ 2>/dev/null || true
+
         git clone https://github.com/Kernel-SU/AnyKernel3
-        rm -rf ./AnyKernel3/.git
-        cp $OUTDIR/Image ./AnyKernel3/ 2>/dev/null || true
-        
-        wget https://dl.google.com/android/gki/gki-certified-boot-android15-6.6-${{ inputs.os_patch_level }}_r1.zip -O gki-kernel.zip || true
-        [ -f gki-kernel.zip ] && unzip -q gki-kernel.zip && rm gki-kernel.zip
-        
-        cd $GITHUB_WORKSPACE/android-kernel
-        if ls $GITHUB_WORKSPACE/boot*.img >/dev/null 2>&1; then
-          python3 tools/mkbootimg/unpack_bootimg.py --boot_img $GITHUB_WORKSPACE/boot*.img
-        fi
-        
-        if [ -d out/ramdisk ]; then
-          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot.img
-          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( OUTDIR/Image.lz4 --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-lz4.img
-          python3 tools/mkbootimg/mkbootimg.py --header_version 4 --kernel \( GITHUB_WORKSPACE/Image.gz --ramdisk out/ramdisk --os_version \){{ inputs.os_version }} --os_patch_level ${{ inputs.os_patch_level }} -o \( GITHUB_WORKSPACE/output/ \){{ inputs.version_name }}-boot-gz.img
-        fi
+        rm -rf AnyKernel3/.git
+        cp $OUTDIR/Image AnyKernel3/ 2>/dev/null || true
 
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.SAFE_ARTIFACT_NAME }}
         path: |
-          ./output/*
-          ./AnyKernel3/*
+          output/*
+          AnyKernel3/*
