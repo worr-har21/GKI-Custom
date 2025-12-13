@@ -40,7 +40,6 @@ jobs:
       ACTIONS_STEP_DEBUG: false
       ACTIONS_RUNNER_DEBUG: false
 
-      # ⚡ Bazel Stabilitäts-Tuning
       BAZEL_ARGS: >
         --jobs=6
         --local_ram_resources=8192
@@ -52,23 +51,16 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
 
-    # 🔥 Speicher freimachen
     - name: Free disk space
       run: |
         echo "=== BEFORE CLEANUP ==="
         df -h
-
-        sudo rm -rf /usr/share/dotnet
-        sudo rm -rf /usr/local/lib/android
-        sudo rm -rf /opt/ghc
-        sudo rm -rf /opt/hostedtoolcache
+        sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache
         sudo apt-get clean
         sudo rm -rf /var/lib/apt/lists/*
-
         echo "=== AFTER CLEANUP ==="
         df -h
 
-    # 🔁 Swap gegen OOM
     - name: Enable swap
       run: |
         sudo fallocate -l 8G /swapfile
@@ -80,12 +72,11 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt update
-        sudo apt install -y \
-          repo wget unzip python3 git zip curl
+        sudo apt install -y repo wget unzip python3 git zip curl
 
     - name: Install repo tool
       run: |
-        curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > repo
+        curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o repo
         chmod +x repo
         sudo mv repo /usr/local/bin/repo
 
@@ -100,9 +91,8 @@ jobs:
           -b common-android15-6.6
         repo sync -c -j6
 
-    # ✅ FIX: push = immer aktiv, dispatch = Input
     - name: Apply Docker / LXC patches
-      if: ${{ github.event_name == 'push' || inputs.custom == true }}
+      if: ${{ github.event_name == 'push' || inputs.custom == 'true' }}
       run: |
         git clone https://github.com/rvalyi/GKI-Custom.git gki-patch
         if [ -f gki-patch/config/gki_defconfig-android15-6.6 ]; then
@@ -112,12 +102,11 @@ jobs:
         cd android-kernel/common
         git apply $GITHUB_WORKSPACE/gki-patch/patchs/*.patch || true
 
-    # ✅ FIX: push = immer aktiv, dispatch = Input
     - name: KernelSU integration
-      if: ${{ github.event_name == 'push' || inputs.kernelsu == true }}
+      if: ${{ github.event_name == 'push' || inputs.kernelsu == 'true' }}
       run: |
         cd android-kernel
-        curl -LSs https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -
+        curl -fsSL https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh | bash -
 
     - name: Build kernel (Bazel)
       run: |
@@ -136,14 +125,11 @@ jobs:
       run: |
         OUTDIR=android-kernel/out/android15-6.6/dist
         mkdir -p output
-
         cp $OUTDIR/Image* output/ 2>/dev/null || true
-
         git clone https://github.com/Kernel-SU/AnyKernel3
         rm -rf AnyKernel3/.git
         cp $OUTDIR/Image AnyKernel3/ 2>/dev/null || true
 
-    # 🧹 Post-Build Cleanup
     - name: Post-build cleanup
       run: |
         rm -rf android-kernel/.repo
