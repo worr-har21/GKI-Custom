@@ -80,6 +80,9 @@ jobs:
         if [ -f gki-patch/config/gki_defconfig-android15-6.6 ]; then
           cp gki-patch/config/gki_defconfig-android15-6.6 android-kernel/common/arch/arm64/configs/gki_defconfig
         fi
+        if [ -f gki-patch/config/stock_gki_defconfig ]; then
+          cp gki-patch/config/stock_gki_defconfig android-kernel/common/arch/arm64/configs/stock_gki_defconfig
+        fi
         PATCH_DIR="$GITHUB_WORKSPACE/gki-patch/patchs"
         cd android-kernel
         for patch in $PATCH_DIR/*.patch; do
