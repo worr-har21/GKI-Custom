@@ -54,14 +54,6 @@ jobs:
         echo "=== AFTER CLEANUP ==="
         df -h
 
-    - name: Enable swap
-      run: |
-        sudo fallocate -l 4G /swapfile
-        sudo chmod 600 /swapfile
-        sudo mkswap /swapfile
-        sudo swapon /swapfile
-        free -h
-
     - name: Install dependencies
       run: |
         sudo apt update
