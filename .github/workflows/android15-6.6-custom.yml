@@ -77,6 +77,7 @@ jobs:
       run: |
         echo "Applying Docker/LXC patches..."
         git clone https://github.com/worr-har21/gki-patches.git gki-patch
+        cd android-kernel
         if [ -f gki-patch/config/gki_defconfig-android15-6.6 ]; then
           cp android-kernel/gki-patch/config/gki_defconfig-android15-6.6 android-kernel/common/arch/arm64/configs/droidspaces.config
         fi
